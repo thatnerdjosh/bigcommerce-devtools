@@ -1,0 +1,52 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+Vagrant.configure("2") do |config|
+  config.vm.communicator = ENV['communicator'] || "winrm"
+  config.vm.guest = :windows
+  config.vm.boot_timeout = 600
+  config.vm.graceful_halt_timeout = 600
+  config.winrm.username = "IEUser"
+  config.winrm.password = "Passw0rd!"
+  config.ssh.username = "IEUser"
+  config.ssh.password = "Passw0rd!"
+  config.ssh.insert_key = false
+  config.ssh.shell = "sh -l"
+  config.ssh.extra_args= "powershell"
+  config.vm.box = "Microsoft/EdgeOnWindows10"
+  config.vm.network :forwarded_port, guest: 5985, host: 5985, id: "winrm", auto_correct: true
+  config.vm.provision "shell",
+    privileged: false,
+    inline: <<-SHELL
+
+      # Reference https://stackoverflow.com/a/37281795
+      cmd /c "reg add HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System /v EnableLUA /d 0 /t REG_DWORD /f /reg:64"
+      powershell "Set-NetConnectionProfile -InterfaceIndex ((Get-NetConnectionProfile).InterfaceIndex) -NetworkCategory Private"
+      cmd /c "winrm quickconfig -q -force"
+      cmd /c 'winrm set winrm/config/winrs @{MaxMemoryPerShellMB="512"}'
+      cmd /c 'winrm set winrm/config @{MaxTimeoutms="1800000"}'
+      cmd /c 'winrm set winrm/config/service @{AllowUnencrypted="true"}'
+      cmd /c 'winrm set winrm/config/service/auth @{Basic="true"}'
+      cmd /c "sc config WinRM start= auto"
+      cmd /c 'netsh firewall add portopening TCP 5985 "Port 5985"'
+      cmd /c 'winrm set winrm/config/listener?Address=*+Transport=HTTP @{Port="5985"}'
+    SHELL
+
+  config.vm.provision "shell",
+    privileged: true,
+    #powershell_elevated_interactive: true,
+    inline: <<-SHELL
+      Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+      choco install -y nvm
+      choco install -y git
+
+      $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\\..\\.."
+      Import-Module "$env:ChocolateyInstall\\helpers\\chocolateyProfile.psm1"
+
+      refreshenv
+
+      nvm install 12.18.4; nvm use 12.18.4;
+      npm install -g windows-build-tools --vs2015
+      npm config set python python2.7
+      npm install -g @bigcommerce/stencil-cli
+    SHELL
+end
